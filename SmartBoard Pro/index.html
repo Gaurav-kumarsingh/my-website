@@ -1,0 +1,558 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF Whiteboard Pro</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #1e1e2f;
+      font-family: sans-serif;
+    }
+
+    /* LEFT TOOLBAR */
+    .leftbar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 34px;
+      height: 100%;
+      background: #2b2b40;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 3px;
+      z-index: 50;
+    }
+
+    /* RIGHT TOOLBAR */
+    .rightbar {
+      position: fixed;
+      right: 0;
+      top: 0;
+      width: 34px;
+      height: 100%;
+      background: #2b2b40;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 3px;
+      z-index: 50;
+    }
+
+    /* BOTTOM BAR */
+    .bottombar {
+      position: fixed;
+      bottom: 0;
+      left: 34px;
+      right: 34px;
+      height: 30px;
+      background: #2b2b40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      z-index: 50;
+    }
+
+    button {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 4px;
+      background: #4c4cff;
+      color: white;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    button:hover {
+      background: #6a6aff;
+    }
+
+    input[type="color"] {
+      width: 26px;
+      height: 20px;
+      border: none;
+    }
+
+    input[type="range"] {
+      width: 70px;
+    }
+
+    #container {
+      position: absolute;
+      left: 34px;
+      right: 34px;
+      top: 0;
+      bottom: 30px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    #viewer {
+      position: relative;
+      transform-origin: center;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #drawCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 5;
+    }
+
+    /* date and time */
+    #timeDisplay,
+    #dateDisplay {
+      text-shadow: 0 0 4px black;
+      /* Makes white text stand out */
+    }
+  </style>
+</head>
+
+<body>
+  <!-- LEFT BAR -->
+  <div class="leftbar">
+    <button onclick="setTool('draw')">✏</button>
+    <button onclick="setTool('highlight')">🖍</button>
+    <button onclick="setTool('erase')">🧽</button>
+    <button onclick="setTool('pan')">✋</button>
+    <button onclick="undo()">↩</button>
+    <button onclick="redo()">↪</button>
+    <button onclick="clearCanvas()">❌</button>
+  </div>
+
+  <!-- RIGHT BAR -->
+  <div class="rightbar">
+    <button onclick="setTool('rect')">▭</button>
+    <button onclick="setTool('circle')">◯</button>
+    <button onclick="setTool('line')">／</button>
+    <button onclick="setTool('arrow')">➤</button>
+    <button onclick="addBlankPage()">➕</button>
+    <button onclick="removePage()">🗑</button>
+    <button onclick="zoomIn()">＋</button>
+    <button onclick="zoomOut()">－</button>
+    <button onclick="fit()">⤢</button>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div class="bottombar">
+    <button onclick="prevPage()">◀</button>
+    <input type="file" id="fileInput" accept="application/pdf" />
+    <span id="pageInfo" style="color: white; font-size: 12px">Page 0 / 0</span>
+    <!-- Color button -->
+    <div style="position: relative">
+      <!-- Main color button -->
+      <button id="mainColorBtn" style="background: #ff0000" onclick="toggleColorPalette()"></button>
+
+      <!-- Horizontal color palette -->
+      <div id="colorPalette" style="
+            display: none;
+            position: absolute;
+            bottom: 35px;
+            left: auto;
+            transform: translateX(-20%);
+            display: flex;
+            flex-direction: row;
+            gap: 3px;
+            background: #2b2b40;
+            padding: 3px;
+            border-radius: 4px;
+          ">
+        <button style="background: #ff0000" onclick="selectColor('#ff0000')"></button>
+        <button style="background: #00ff00" onclick="selectColor('#00ff00')"></button>
+        <button style="background: #0000ff" onclick="selectColor('#0000ff')"></button>
+        <button style="background: #ffff00" onclick="selectColor('#ffff00')"></button>
+        <button style="background: #ff00ff" onclick="selectColor('#ff00ff')"></button>
+        <button style="background: #00ffff" onclick="selectColor('#00ffff')"></button>
+        <button style="background: #000000" onclick="selectColor('#000000')"></button>
+        <button style="background: #ffffff" onclick="selectColor('#ffffff')"></button>
+      </div>
+
+      <!-- Hidden color picker for pen drawing -->
+      <input type="color" id="colorPicker" value="#ff0000" style="display: none" />
+    </div>
+    <input type="range" id="brushSize" min="1" max="30" value="4" />
+    <button onclick="nextPage()">▶</button>
+  </div>
+
+  <div id="container">
+    <div id="viewer">
+      <canvas id="pdfCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- some new add -->
+  <!-- Top right time -->
+  <div id="timeDisplay" style="
+  position: fixed;
+  top: 5px;
+  right: 40px;
+  color: white;
+  font-size: 18px;
+  font-family: monospace;
+  z-index: 100;
+"></div>
+
+  <!-- Bottom right date -->
+  <div id="dateDisplay" style="
+  position: fixed;
+  bottom: 5px;
+  right: 40px;
+  color: white;
+  font-size: 16px;
+  font-family: sans-serif;
+  z-index: 100;
+"></div>
+
+  <!-- completed -->
+
+  <canvas id="drawCanvas"></canvas>
+
+  <script>
+    let pdfDoc = null,
+      pages = [],
+      currentIndex = 0;
+    let tool = "draw",
+      drawing = false,
+      panning = false;
+    let startX,
+      startY,
+      zoom = 1,
+      panX = 0,
+      panY = 0;
+    let undoStack = [],
+      redoStack = [];
+
+    const pdfCanvas = document.getElementById("pdfCanvas");
+    const pdfCtx = pdfCanvas.getContext("2d");
+    const drawCanvas = document.getElementById("drawCanvas");
+    const ctx = drawCanvas.getContext("2d");
+    const viewer = document.getElementById("viewer");
+    const colorPicker = document.getElementById("colorPicker");
+    const brushSize = document.getElementById("brushSize");
+
+    function resize() {
+      drawCanvas.width = window.innerWidth;
+      drawCanvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener("resize", resize);
+
+    function setTool(t) {
+      tool = t;
+    }
+
+    function saveState() {
+      undoStack.push(drawCanvas.toDataURL());
+      redoStack = [];
+    }
+
+    function undo() {
+      if (!undoStack.length) return;
+      redoStack.push(drawCanvas.toDataURL());
+      let img = new Image();
+      img.src = undoStack.pop();
+      img.onload = () => {
+        ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+    }
+
+    function redo() {
+      if (!redoStack.length) return;
+      undoStack.push(drawCanvas.toDataURL());
+      let img = new Image();
+      img.src = redoStack.pop();
+      img.onload = () => {
+        ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+    }
+
+    // --- CENTRALIZED DRAWING LOGIC ---
+
+    function startAction(x, y) {
+      if (tool === "pan") {
+        panning = true;
+        startX = x;
+        startY = y;
+        return;
+      }
+      saveState();
+      drawing = true;
+      startX = x;
+      startY = y;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+    }
+
+    function moveAction(x, y, movementX, movementY) {
+      if (panning) {
+        panX += movementX;
+        panY += movementY;
+        viewer.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+        return;
+      }
+      if (!drawing) return;
+
+      // Tools that draw "live" (freehand)
+      if (tool === "draw" || tool === "highlight" || tool === "erase") {
+        ctx.lineCap = "round";
+        if (tool === "highlight") {
+          ctx.lineWidth = brushSize.value * 2;
+          ctx.globalAlpha = 0.1;
+        } else {
+          ctx.lineWidth = brushSize.value;
+          ctx.globalAlpha = 1;
+        }
+
+        if (tool === "erase") {
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.lineWidth = brushSize.value * 2;
+        } else {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.strokeStyle = colorPicker.value;
+        }
+
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        // For freehand, we update start points to keep the line smooth
+        startX = x;
+        startY = y;
+      }
+    }
+
+    function endAction(x, y) {
+      if (!drawing) {
+        panning = false;
+        return;
+      }
+
+      ctx.strokeStyle = colorPicker.value;
+      ctx.lineWidth = brushSize.value;
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+
+      // Tools that draw only when you let go (Shapes)
+      if (tool === "rect") {
+        ctx.strokeRect(startX, startY, x - startX, y - startY);
+      } else if (tool === "circle") {
+        let r = Math.hypot(x - startX, y - startY);
+        ctx.beginPath();
+        ctx.arc(startX, startY, r, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (tool === "line") {
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      } else if (tool === "arrow") {
+        const headLen = 15;
+        const dx = x - startX;
+        const dy = y - startY;
+        const angle = Math.atan2(dy, dx);
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(x, y);
+        ctx.moveTo(
+          x - headLen * Math.cos(angle - Math.PI / 6),
+          y - headLen * Math.sin(angle - Math.PI / 6),
+        );
+        ctx.lineTo(x, y);
+        ctx.lineTo(
+          x - headLen * Math.cos(angle + Math.PI / 6),
+          y - headLen * Math.sin(angle + Math.PI / 6),
+        );
+        ctx.stroke();
+      }
+
+      drawing = false;
+      panning = false;
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    // --- MOUSE EVENTS ---
+    drawCanvas.addEventListener("mousedown", (e) =>
+      startAction(e.clientX, e.clientY),
+    );
+    drawCanvas.addEventListener("mousemove", (e) =>
+      moveAction(e.clientX, e.clientY, e.movementX, e.movementY),
+    );
+    drawCanvas.addEventListener("mouseup", (e) =>
+      endAction(e.clientX, e.clientY),
+    );
+
+    // --- TOUCH EVENTS ---
+    drawCanvas.addEventListener(
+      "touchstart",
+      (e) => {
+        e.preventDefault();
+        const t = e.touches[0];
+        startAction(t.clientX, t.clientY);
+      },
+      { passive: false },
+    );
+
+    drawCanvas.addEventListener(
+      "touchmove",
+      (e) => {
+        e.preventDefault();
+        const t = e.touches[0];
+        // Calculate manual movement for panning on touch
+        const movX = t.clientX - startX;
+        const movY = t.clientY - startY;
+        moveAction(t.clientX, t.clientY, movX, movY);
+        if (panning) {
+          // Update start points only during pan to allow movement
+          startX = t.clientX;
+          startY = t.clientY;
+        }
+      },
+      { passive: false },
+    );
+
+    drawCanvas.addEventListener(
+      "touchend",
+      (e) => {
+        e.preventDefault();
+        const t = e.changedTouches[0];
+        endAction(t.clientX, t.clientY);
+      },
+      { passive: false },
+    );
+
+    // --- PDF & UI LOGIC ---
+    function clearCanvas() {
+      ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    }
+    function zoomIn() {
+      zoom += 0.1;
+      viewer.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+    }
+    function zoomOut() {
+      zoom = Math.max(0.4, zoom - 0.1);
+      viewer.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+    }
+    function fit() {
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+      viewer.style.transform = "translate(0,0) scale(1)";
+    }
+
+    document.getElementById("fileInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function () {
+        pdfjsLib
+          .getDocument(new Uint8Array(this.result))
+          .promise.then((pdf) => {
+            pdfDoc = pdf;
+            pages = [];
+            for (let i = 1; i <= pdf.numPages; i++)
+              pages.push({ type: "pdf", num: i });
+            currentIndex = 0;
+            renderPage();
+          });
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    function renderPage() {
+      clearCanvas();
+      let page = pages[currentIndex];
+      if (page.type === "blank") {
+        pdfCanvas.width = 900;
+        pdfCanvas.height = 1200;
+        pdfCtx.fillStyle = "white";
+        pdfCtx.fillRect(0, 0, 900, 1200);
+      } else {
+        pdfDoc.getPage(page.num).then((p) => {
+          let viewport = p.getViewport({ scale: 1 });
+          pdfCanvas.width = viewport.width;
+          pdfCanvas.height = viewport.height;
+          p.render({ canvasContext: pdfCtx, viewport: viewport });
+        });
+      }
+      document.getElementById("pageInfo").textContent =
+        `Page ${currentIndex + 1} / ${pages.length}`;
+    }
+
+    function addBlankPage() {
+      pages.splice(currentIndex + 1, 0, { type: "blank" });
+      currentIndex++;
+      renderPage();
+    }
+    function removePage() {
+      if (pages.length <= 1) return;
+      pages.splice(currentIndex, 1);
+      if (currentIndex >= pages.length) currentIndex = pages.length - 1;
+      renderPage();
+    }
+    function nextPage() {
+      if (currentIndex < pages.length - 1) {
+        currentIndex++;
+        renderPage();
+      }
+    }
+    function prevPage() {
+      if (currentIndex > 0) {
+        currentIndex--;
+        renderPage();
+      }
+    }
+
+    let colorPaletteVisible = false;
+    function toggleColorPalette() {
+      const palette = document.getElementById("colorPalette");
+      colorPaletteVisible = !colorPaletteVisible;
+      palette.style.display = colorPaletteVisible ? "flex" : "none";
+    }
+    function selectColor(c) {
+      document.getElementById("mainColorBtn").style.background = c;
+      document.getElementById("colorPicker").value = c;
+      toggleColorPalette();
+    }
+
+    //date and time added
+    function updateDateTime() {
+      const now = new Date();
+
+      // --- Time (HH:MM:SS)
+      let hours = String(now.getHours()).padStart(2, '0');
+      let minutes = String(now.getMinutes()).padStart(2, '0');
+      document.getElementById('timeDisplay').innerText = `${hours}:${minutes}`;
+
+      // --- Date (Short format: Fri, 19 Mar)
+      const options = { weekday: 'short', day: 'numeric', month: 'short' };
+      document.getElementById('dateDisplay').innerText = now.toLocaleDateString('en-IN', options);
+    }
+
+    // Update every second
+    updateDateTime();
+    setInterval(updateDateTime, 1000);
+  </script>
+</body>
+
+</html>
