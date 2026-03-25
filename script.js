@@ -183,64 +183,53 @@ let pdfDoc = null,
       );
 
       // --- TOUCH EVENTS ---
- // --- FIXED TOUCH EVENTS (NO LAG / NO EXTRA TOUCH) ---
+ // --- TOUCH EVENTS ---
 
-let isTouchActive = false;
+drawCanvas.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
 
-drawCanvas.addEventListener("touchstart", (e) => {
-  e.preventDefault();
+    startX = t.clientX;
+    startY = t.clientY;
 
-  // ❌ ignore multi-touch
-  if (e.touches.length > 1) return;
+    startAction(startX, startY);
+  },
+  { passive: false }
+);
 
-  if (isTouchActive) return; // prevent duplicate start
-  isTouchActive = true;
+drawCanvas.addEventListener(
+  "touchmove",
+  (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
 
-  const t = e.touches[0];
+    const currentX = t.clientX;
+    const currentY = t.clientY;
 
-  tool = "erase"; // keep your logic
+    const movX = currentX - startX;
+    const movY = currentY - startY;
 
-  startX = t.clientX;
-  startY = t.clientY;
+    moveAction(currentX, currentY, movX, movY);
 
-  startAction(startX, startY);
-}, { passive: false });
+    // Always update for smooth movement
+    startX = currentX;
+    startY = currentY;
+  },
+  { passive: false }
+);
 
+drawCanvas.addEventListener(
+  "touchend",
+  (e) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
 
-drawCanvas.addEventListener("touchmove", (e) => {
-  e.preventDefault();
-
-  // ❌ ignore multi-touch
-  if (e.touches.length > 1) return;
-
-  if (!isTouchActive) return;
-
-  const t = e.touches[0];
-
-  const movX = t.clientX - startX;
-  const movY = t.clientY - startY;
-
-  moveAction(t.clientX, t.clientY, movX, movY);
-
-  // update for smooth movement
-  startX = t.clientX;
-  startY = t.clientY;
-
-}, { passive: false });
-
-
-drawCanvas.addEventListener("touchend", (e) => {
-  e.preventDefault();
-
-  if (!isTouchActive) return;
-
-  const t = e.changedTouches[0];
-
-  endAction(t.clientX, t.clientY);
-
-  isTouchActive = false;
-
-}, { passive: false });
+    endAction(t.clientX, t.clientY);
+  },
+  { passive: false }
+);
       // --- PDF & UI LOGIC ---
       function clearCanvas() {
         ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
