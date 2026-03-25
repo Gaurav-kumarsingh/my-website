@@ -183,7 +183,9 @@ let pdfDoc = null,
       );
 
       // --- TOUCH EVENTS ---
-  let isTouchActive = false;
+ // --- FIXED TOUCH EVENTS (NO LAG / NO EXTRA TOUCH) ---
+
+let isTouchActive = false;
 
 drawCanvas.addEventListener("touchstart", (e) => {
   e.preventDefault();
@@ -238,9 +240,7 @@ drawCanvas.addEventListener("touchend", (e) => {
 
   isTouchActive = false;
 
-}, { passive: false }); // 
-
-
+}, { passive: false });
       // --- PDF & UI LOGIC ---
       function clearCanvas() {
         ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
