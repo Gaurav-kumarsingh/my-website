@@ -183,44 +183,51 @@ let pdfDoc = null,
       );
 
       // --- TOUCH EVENTS ---
-      drawCanvas.addEventListener(
-        "touchstart",
-        (e) => {
-          e.preventDefault();
-          const t = e.touches[0];
-          startAction(t.clientX, t.clientY);
-        },
-        { passive: false },
-      );
+    drawCanvas.addEventListener(
+  "touchstart",
+  (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
 
-      drawCanvas.addEventListener(
-        "touchmove",
-        (e) => {
-          e.preventDefault();
-          const t = e.touches[0];
-          // Calculate manual movement for panning on touch
-          const movX = t.clientX - startX;
-          const movY = t.clientY - startY;
-          moveAction(t.clientX, t.clientY, movX, movY);
-          if (panning) {
-            // Update start points only during pan to allow movement
-            startX = t.clientX;
-            startY = t.clientY;
-          }
-        },
-        { passive: false },
-      );
+    startX = t.clientX;
+    startY = t.clientY;
 
-      drawCanvas.addEventListener(
-        "touchend",
-        (e) => {
-          e.preventDefault();
-          const t = e.changedTouches[0];
-          endAction(t.clientX, t.clientY);
-        },
-        { passive: false },
-      );
+    startAction(startX, startY);
+  },
+  { passive: false }
+);
 
+drawCanvas.addEventListener(
+  "touchmove",
+  (e) => {
+    e.preventDefault();
+    const t = e.touches[0];
+
+    const currentX = t.clientX;
+    const currentY = t.clientY;
+
+    const movX = currentX - startX;
+    const movY = currentY - startY;
+
+    moveAction(currentX, currentY, movX, movY);
+
+    // Always update for smooth movement
+    startX = currentX;
+    startY = currentY;
+  },
+  { passive: false }
+);
+
+drawCanvas.addEventListener(
+  "touchend",
+  (e) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+
+    endAction(t.clientX, t.clientY);
+  },
+  { passive: false }
+);
       // --- PDF & UI LOGIC ---
       function clearCanvas() {
         ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
