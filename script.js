@@ -1,252 +1,371 @@
 let pdfDoc = null,
         pages = [],
         currentIndex = 0;
-      let tool = "draw",
-        drawing = false,
-        panning = false;
-      let startX,
-        startY,
-        zoom = 1,
-        panX = 0,
-        panY = 0;
-      let undoStack = [],
-        redoStack = [];
 
       const pdfCanvas = document.getElementById("pdfCanvas");
       const pdfCtx = pdfCanvas.getContext("2d");
-      const drawCanvas = document.getElementById("drawCanvas");
-      const ctx = drawCanvas.getContext("2d");
-      const viewer = document.getElementById("viewer");
-      const colorPicker = document.getElementById("colorPicker");
-      const brushSize = document.getElementById("brushSize");
 
-      function resize() {
-        drawCanvas.width = window.innerWidth;
-        drawCanvas.height = window.innerHeight;
-      }
-      resize();
-      window.addEventListener("resize", resize);
 
-      function setTool(t) {
-        tool = t;
-      }
 
-      function saveState() {
-        undoStack.push(drawCanvas.toDataURL());
-        redoStack = [];
-      }
+const activeTouches = new Map();
 
-      function undo() {
-        if (!undoStack.length) return;
-        redoStack.push(drawCanvas.toDataURL());
-        let img = new Image();
-        img.src = undoStack.pop();
-        img.onload = () => {
-          ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-          ctx.drawImage(img, 0, 0);
-        };
-      }
+// Pan/zoom state
+let panX = 0,
+  panY = 0,
+  zoom = 1,
+  panning = false,
+  startX = 0,
+  startY = 0;
 
-      function redo() {
-        if (!redoStack.length) return;
-        undoStack.push(drawCanvas.toDataURL());
-        let img = new Image();
-        img.src = redoStack.pop();
-        img.onload = () => {
-          ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-          ctx.drawImage(img, 0, 0);
-        };
-      }
+// Tool state
+let tool = "draw"; // draw, erase, highlight, rect, circle, line, arrow, pan
 
-      // --- CENTRALIZED DRAWING LOGIC ---
+// Canvas
+const drawCanvas = document.getElementById("drawCanvas");
+const ctx = drawCanvas.getContext("2d");
+const viewer = document.getElementById("viewer");
+const colorPicker = document.getElementById("colorPicker");
+const brushSize = document.getElementById("brushSize");
 
-      function startAction(x, y) {
-        if (tool === "pan") {
-          panning = true;
-          startX = x;
-          startY = y;
-          return;
-        }
-        saveState();
-        drawing = true;
-        startX = x;
-        startY = y;
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-      }
+// Undo/redo stacks
+const undoStack = [];
+const redoStack = [];
 
-      function moveAction(x, y, movementX, movementY) {
-        if (panning) {
-          panX += movementX;
-          panY += movementY;
-          viewer.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
-          return;
-        }
-        if (!drawing) return;
+// Per-page history
+const pageStrokes = [];
+const pageRedoStacks = [];
 
-        // Tools that draw "live" (freehand)
-        if (tool === "draw" || tool === "highlight" || tool === "erase") {
-          ctx.lineCap = "round";
-          if (tool === "highlight") {
-            ctx.lineWidth = brushSize.value * 7;
-            ctx.globalAlpha = 0.05;
-          } else {
-            ctx.lineWidth = brushSize.value;
-            ctx.globalAlpha = 1;
-          }
-
-          if (tool === "erase") {
-            ctx.globalCompositeOperation = "destination-out";
-            ctx.lineWidth = brushSize.value * 11;
-          } else {
-            ctx.globalCompositeOperation = "source-over";
-            ctx.strokeStyle = colorPicker.value;
-          }
-
-          ctx.lineTo(x, y);
-          ctx.stroke();
-          // For freehand, we update start points to keep the line smooth
-          startX = x;
-          startY = y;
-        }
-      }
-
-      function endAction(x, y) {
-        if (!drawing) {
-          panning = false;
-          return;
-        }
-
-        ctx.strokeStyle = colorPicker.value;
-        ctx.lineWidth = brushSize.value;
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = "source-over";
-
-        // Tools that draw only when you let go (Shapes)
-        if (tool === "rect") {
-          ctx.strokeRect(startX, startY, x - startX, y - startY);
-        } else if (tool === "circle") {
-    // Calculate distance between start and end points
-    let d = Math.hypot(x - startX, y - startY);
-
-    // Treat the distance as the diameter, so radius is half
-    let r = d / 2;
-
-    // Calculate the center of the circle (midpoint between start and end)
-    let centerX = (startX + x) / 2;
-    let centerY = (startY + y) / 2;
-
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
-    ctx.stroke();
+// Resize canvas
+function resize() {
+  drawCanvas.width = window.innerWidth;
+  drawCanvas.height = window.innerHeight;
 }
-         else if (tool === "line") {
-          ctx.beginPath();
-          ctx.moveTo(startX, startY);
-          ctx.lineTo(x, y);
-          ctx.stroke();
-        } else if (tool === "arrow") {
-          const headLen = 15;
-          const dx = x - startX;
-          const dy = y - startY;
-          const angle = Math.atan2(dy, dx);
-          ctx.beginPath();
-          ctx.moveTo(startX, startY);
-          ctx.lineTo(x, y);
-          ctx.moveTo(
-            x - headLen * Math.cos(angle - Math.PI / 6),
-            y - headLen * Math.sin(angle - Math.PI / 6),
-          );
-          ctx.lineTo(x, y);
-          ctx.lineTo(
-            x - headLen * Math.cos(angle + Math.PI / 6),
-            y - headLen * Math.sin(angle + Math.PI / 6),
-          );
-          ctx.stroke();
-        }
+resize();
+window.addEventListener("resize", resize);
 
-        drawing = false;
-        panning = false;
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = "source-over";
+// --- Helper: redraw all strokes ---
+function redraw(strokes) {
+  ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+  for (let s of strokes) {
+    ctx.lineCap = "round";
+
+    if (s.tool === "erase") {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.lineWidth = s.width * 2;
+    } else if (s.tool === "highlight") {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.lineWidth = s.width * 5;
+      ctx.globalAlpha = 0.1;
+      ctx.strokeStyle = s.color;
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.lineWidth = s.width;
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = s.color;
+    }
+
+    if (s.tool === "draw" || s.tool === "erase" || s.tool === "highlight") {
+      ctx.beginPath();
+      ctx.moveTo(s.path[0].x, s.path[0].y);
+      for (let i = 1; i < s.path.length; i++) {
+        ctx.lineTo(s.path[i].x, s.path[i].y);
       }
+      ctx.stroke();
+    } else if (s.tool === "rect") {
+  // Calculate top-left and width/height dynamically
+  const x = Math.min(s.shape.x1, s.shape.x2);
+  const y = Math.min(s.shape.y1, s.shape.y2);
+  const w = Math.abs(s.shape.x2 - s.shape.x1);
+  const h = Math.abs(s.shape.y2 - s.shape.y1);
 
-      // --- MOUSE EVENTS ---
-      drawCanvas.addEventListener("mousedown", (e) =>
-        startAction(e.clientX, e.clientY),
-      );
-      drawCanvas.addEventListener("mousemove", (e) =>
-        moveAction(e.clientX, e.clientY, e.movementX, e.movementY),
-      );
-      drawCanvas.addEventListener("mouseup", (e) =>
-        endAction(e.clientX, e.clientY),
-      );
+  ctx.beginPath();
+  ctx.strokeRect(x, y, w, h);
+  ctx.stroke();
 
-      // --- TOUCH EVENTS ---
- // --- TOUCH EVENTS ---
+    } else if (s.tool === "circle") {
+      const { cx, cy, r } = s.shape;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (s.tool === "line") {
+      const { x1, y1, x2, y2 } = s.shape;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    } else if (s.tool === "arrow") {
+      const { x1, y1, x2, y2 } = s.shape;
+      const headLen = 15;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const angle = Math.atan2(dy, dx);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.moveTo(
+        x2 - headLen * Math.cos(angle - Math.PI / 6),
+        y2 - headLen * Math.sin(angle - Math.PI / 6),
+      );
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(
+        x2 - headLen * Math.cos(angle + Math.PI / 6),
+        y2 - headLen * Math.sin(angle + Math.PI / 6),
+      );
+      ctx.stroke();
+    }
 
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
+}
+
+function cloneStroke(stroke) {
+  return {
+    tool: stroke.tool,
+    color: stroke.color,
+    width: stroke.width,
+    path: stroke.path ? stroke.path.map((p) => ({ x: p.x, y: p.y })) : null,
+    shape: stroke.shape ? { ...stroke.shape } : null,
+  };
+}
+
+function saveCurrentPageState() {
+  pageStrokes[currentIndex] = undoStack.map(cloneStroke);
+  pageRedoStacks[currentIndex] = redoStack.map(cloneStroke);
+}
+
+function loadCurrentPageState() {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  if (Array.isArray(pageStrokes[currentIndex])) {
+    for (const stroke of pageStrokes[currentIndex]) undoStack.push(cloneStroke(stroke));
+  }
+  if (Array.isArray(pageRedoStacks[currentIndex])) {
+    for (const stroke of pageRedoStacks[currentIndex]) redoStack.push(cloneStroke(stroke));
+  }
+  redraw(undoStack);
+}
+
+// --- TOUCH START ---
 drawCanvas.addEventListener(
   "touchstart",
   (e) => {
     e.preventDefault();
-    const t = e.touches[0];
+    for (let t of e.changedTouches) {
+      if (tool !== "pan") {
+        // Each stroke stores its tool, color, width
+        const stroke = {
+          tool,
+          color: colorPicker.value,
+          width: brushSize.value,
+          path:
+            tool === "draw" || tool === "erase" || tool === "highlight"
+              ? [{ x: t.clientX, y: t.clientY }]
+              : [],
+          shape:
+            tool !== "draw" && tool !== "erase" && tool !== "highlight"
+              ? { x1: t.clientX, y1: t.clientY, x2: t.clientX, y2: t.clientY }
+              : null,
+        };
+        activeTouches.set(t.identifier, stroke);
+      }
 
-    startX = t.clientX;
-    startY = t.clientY;
-
-    startAction(startX, startY);
+      if (tool === "pan") {
+        panning = true;
+        startX = t.clientX;
+        startY = t.clientY;
+      }
+    }
   },
-  { passive: false }
+  { passive: false },
 );
 
+// --- TOUCH MOVE ---
 drawCanvas.addEventListener(
   "touchmove",
   (e) => {
     e.preventDefault();
-    const t = e.touches[0];
 
-    const currentX = t.clientX;
-    const currentY = t.clientY;
+    if (tool === "pan" && panning) {
+      const t = e.changedTouches[0];
+      const lastX = startX;
+      const lastY = startY;
+      panX += t.clientX - lastX;
+      panY += t.clientY - lastY;
+      startX = t.clientX;
+      startY = t.clientY;
+      applyTransform();
+      return;
+    }
 
-    const movX = currentX - startX;
-    const movY = currentY - startY;
+    for (let t of e.changedTouches) {
+      const stroke = activeTouches.get(t.identifier);
+      if (!stroke) continue;
 
-    moveAction(currentX, currentY, movX, movY);
+      if (
+        stroke.tool === "draw" ||
+        stroke.tool === "erase" ||
+        stroke.tool === "highlight"
+      ) {
+        const lastPoint = stroke.path[stroke.path.length - 1];
+        stroke.path.push({ x: t.clientX, y: t.clientY });
 
-    // Always update for smooth movement
-    startX = currentX;
-    startY = currentY;
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.x, lastPoint.y);
+        ctx.lineTo(t.clientX, t.clientY);
+
+        ctx.lineCap = "round";
+        if (stroke.tool === "erase") {
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.lineWidth = stroke.width * 2;
+        } else if (stroke.tool === "highlight") {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.lineWidth = stroke.width * 5;
+          ctx.globalAlpha = 0.1;
+          ctx.strokeStyle = stroke.color;
+        } else {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+          ctx.lineWidth = stroke.width;
+          ctx.strokeStyle = stroke.color;
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+      } else {
+        // Update shape coordinates dynamically
+        stroke.shape.x2 = t.clientX;
+        stroke.shape.y2 = t.clientY;
+        if (stroke.tool === "circle") {
+          const dx = stroke.shape.x2 - stroke.shape.x1;
+          const dy = stroke.shape.y2 - stroke.shape.y1;
+          stroke.shape.cx = (stroke.shape.x1 + stroke.shape.x2) / 2;
+          stroke.shape.cy = (stroke.shape.y1 + stroke.shape.y2) / 2;
+          stroke.shape.r = Math.hypot(dx, dy) / 2;
+        }
+
+        // Redraw all strokes plus current one
+        redraw([...undoStack, stroke]);
+      }
+    }
   },
-  { passive: false }
+  { passive: false },
 );
 
+// --- TOUCH END ---
 drawCanvas.addEventListener(
   "touchend",
   (e) => {
     e.preventDefault();
-    const t = e.changedTouches[0];
 
-    endAction(t.clientX, t.clientY);
+    if (tool === "pan") {
+      panning = false;
+      return;
+    }
+
+    for (let t of e.changedTouches) {
+      const stroke = activeTouches.get(t.identifier);
+      if (!stroke) continue;
+
+      undoStack.push(stroke);
+      redoStack.length = 0;
+      redraw(undoStack);
+
+      activeTouches.delete(t.identifier);
+    }
   },
-  { passive: false }
+  { passive: false },
 );
-      // --- PDF & UI LOGIC ---
-      function clearCanvas() {
+
+// --- MOUSE PAN ---
+drawCanvas.addEventListener("mousedown", (e) => {
+  if (tool === "pan") {
+    panning = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    drawCanvas.style.cursor = "grabbing";
+    e.preventDefault();
+  }
+});
+
+drawCanvas.addEventListener("mousemove", (e) => {
+  if (tool === "pan" && panning) {
+    panX += e.clientX - startX;
+    panY += e.clientY - startY;
+    startX = e.clientX;
+    startY = e.clientY;
+    applyTransform();
+    e.preventDefault();
+  }
+});
+
+drawCanvas.addEventListener("mouseup", () => {
+  if (tool === "pan") {
+    panning = false;
+    drawCanvas.style.cursor = "grab";
+  }
+});
+
+drawCanvas.addEventListener("mouseleave", () => {
+  if (tool === "pan") panning = false;
+});
+
+// --- UNDO ---
+function undo() {
+  if (!undoStack.length) return;
+  const lastStroke = undoStack.pop();
+  redoStack.push(lastStroke);
+  redraw(undoStack);
+}
+
+// --- REDO ---
+function redo() {
+  if (!redoStack.length) return;
+  const stroke = redoStack.pop();
+  undoStack.push(stroke);
+  redraw(undoStack);
+}
+
+// --- TOOL SELECTION ---
+function setTool(t) {
+  tool = t;
+  if (tool === "pan") {
+    drawCanvas.style.cursor = "grab";
+  } else {
+    drawCanvas.style.cursor = "crosshair";
+  }
+}
+
+function applyTransform() {
+  const transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  viewer.style.transform = transform;
+  // drawCanvas remains fixed at full-window overlay so drawn content is stable on the screen
+}
+
+   // --- PDF & UI LOGIC ---
+      function clearDrawCanvas() {
         ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      }
+
+      function clearCanvas() {
+        clearDrawCanvas();
+        undoStack.length = 0;
+        redoStack.length = 0;
+        pageStrokes[currentIndex] = [];
       }
       function zoomIn() {
         zoom += 0.1;
-        viewer.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+        applyTransform();
       }
       function zoomOut() {
         zoom = Math.max(0.4, zoom - 0.1);
-        viewer.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+        applyTransform();
       }
       function fit() {
         zoom = 1;
         panX = 0;
         panY = 0;
-        viewer.style.transform = "translate(0,0) scale(1)";
+        applyTransform();
       }
 
       document.getElementById("fileInput").addEventListener("change", (e) => {
@@ -258,17 +377,23 @@ drawCanvas.addEventListener(
             .promise.then((pdf) => {
               pdfDoc = pdf;
               pages = [];
-              for (let i = 1; i <= pdf.numPages; i++)
+              pageStrokes.length = 0;
+              pageRedoStacks.length = 0;
+              for (let i = 1; i <= pdf.numPages; i++) {
                 pages.push({ type: "pdf", num: i });
+                pageStrokes.push([]);
+                pageRedoStacks.push([]);
+              }
               currentIndex = 0;
               renderPage();
+              loadCurrentPageState();
             });
         };
         reader.readAsArrayBuffer(file);
       });
 
       function renderPage() {
-        clearCanvas();
+        clearDrawCanvas();
         let page = pages[currentIndex];
         if (page.type === "blank") {
           pdfCanvas.width = 900;
@@ -287,30 +412,6 @@ drawCanvas.addEventListener(
           `Page ${currentIndex + 1} / ${pages.length}`;
       }
 
-      function addBlankPage() {
-        pages.splice(currentIndex + 1, 0, { type: "blank" });
-        currentIndex++;
-        renderPage();
-      }
-      function removePage() {
-        if (pages.length <= 1) return;
-        pages.splice(currentIndex, 1);
-        if (currentIndex >= pages.length) currentIndex = pages.length - 1;
-        renderPage();
-      }
-      function nextPage() {
-        if (currentIndex < pages.length - 1) {
-          currentIndex++;
-          renderPage();
-        }
-      }
-      function prevPage() {
-        if (currentIndex > 0) {
-          currentIndex--;
-          renderPage();
-        }
-      }
-
       let colorPaletteVisible = false;
       function toggleColorPalette() {
         const palette = document.getElementById("colorPalette");
@@ -325,141 +426,103 @@ drawCanvas.addEventListener(
 
       // changes added
 
-      function togglePDFLibrary(){
-  const menu = document.getElementById("pdfLibrary");
+      function togglePDFLibrary() {
+        const menu = document.getElementById("pdfLibrary");
+        if (menu.style.display === "flex") {
+          menu.style.display = "none";
+        } else {
+          menu.style.display = "flex";
+        }
+      }
 
-  if(menu.style.display === "flex"){
-    menu.style.display = "none";
-  }else{
-    menu.style.display = "flex";
-  }
-}
+      function loadWebsitePDF(url) {
+        pdfjsLib.getDocument(url).promise.then((pdf) => {
+          pdfDoc = pdf;
+          pages = [];
+          pageStrokes.length = 0;
+          pageRedoStacks.length = 0;
 
+          for (let i = 1; i <= pdf.numPages; i++) {
+            pages.push({ type: "pdf", num: i });
+            pageStrokes.push([]);
+            pageRedoStacks.push([]);
+          }
 
-function loadWebsitePDF(url){
-  
-  pdfjsLib.getDocument(url).promise.then((pdf)=>{
-    
-    pdfDoc = pdf;
-    pages = [];
-    
-    for(let i=1;i<=pdf.numPages;i++){
-      pages.push({type:"pdf",num:i});
-    }
-    
-    currentIndex = 0;
-    
-    renderPage();
-    
-    // hide the PDF menu after selecting
-    document.getElementById("pdfLibrary").style.display = "none";
-    
-  });
-  
-}
+          currentIndex = 0;
+          clearDrawCanvas();
+          undoStack.length = 0;
+          redoStack.length = 0;
 
-// already work
+          renderPage();
+          loadCurrentPageState();
 
-let pageDrawings = [];
-
-function saveCurrentCanvas(){
-  pageDrawings[currentIndex] = drawCanvas.toDataURL();
-}
-
-function nextPage(){
-  if(currentIndex < pages.length-1){
-    saveCurrentCanvas();       // save current page drawing
-    currentIndex++;
-    renderPage();
-    restoreCanvas();           // restore next page drawing
-  }
-}
-
-function prevPage(){
-  if(currentIndex > 0){
-    saveCurrentCanvas();       // save current page drawing
-    currentIndex--;
-    renderPage();
-    restoreCanvas();           // restore previous page drawing
-  }
-}
-
-function restoreCanvas(){
-  ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-  if(pageDrawings[currentIndex]){
-    let img = new Image();
-    img.src = pageDrawings[currentIndex];
-    img.onload = ()=>{ ctx.drawImage(img, 0, 0); }
-  }
-}
-
-function addBlankPage(){
-  saveCurrentCanvas(); // save current page
-  pages.splice(currentIndex+1, 0, {type:"blank"});
-  currentIndex++;
-  renderPage();
-  restoreCanvas();     // start with empty drawing
-}
-
-// add next page
-function saveCurrentCanvas() {
-    pageDrawings[currentIndex] = drawCanvas.toDataURL();
-}
-
-function restoreCanvas() {
-    ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-    if(pageDrawings[currentIndex]){
-        let img = new Image();
-        img.src = pageDrawings[currentIndex];
-        img.onload = () => ctx.drawImage(img, 0, 0);
-    }
-}
+          document.getElementById("pdfLibrary").style.display = "none";
+        });
+      }
 
 
 function nextPage() {
-    saveCurrentCanvas();
-
-    // If at last page, add a new blank page automatically
-    if (currentIndex >= pages.length - 1) {
-        pages.push({ type: "blank" });
-    }
-
-    currentIndex++;
-    renderPage();
-    restoreCanvas();
+  saveCurrentPageState();
+  if (currentIndex >= pages.length - 1) {
+    pages.push({ type: "blank" });
+  }
+  currentIndex++;
+  renderPage();
+  loadCurrentPageState();
 }
 
 function prevPage() {
-    if (currentIndex > 0) {
-        saveCurrentCanvas();
-        currentIndex--;
-        renderPage();
-        restoreCanvas();
-    }
+  if (currentIndex <= 0) return;
+  saveCurrentPageState();
+  currentIndex--;
+  renderPage();
+  loadCurrentPageState();
+}
+
+function removePage() {
+  if (pages.length <= 1) return;
+
+  saveCurrentPageState();
+  pages.splice(currentIndex, 1);
+  pageStrokes.splice(currentIndex, 1);
+  pageRedoStacks.splice(currentIndex, 1);
+
+  if (currentIndex >= pages.length) {
+    currentIndex = pages.length - 1;
+  }
+
+  renderPage();
+  loadCurrentPageState();
 }
 
 function addBlankPage() {
-    saveCurrentCanvas();
-    pages.splice(currentIndex + 1, 0, { type: "blank" });
-    currentIndex++;
-    renderPage();
-    restoreCanvas();
+  saveCurrentPageState();
+  pages.splice(currentIndex + 1, 0, { type: "blank" });
+  pageStrokes.splice(currentIndex + 1, 0, []);
+  pageRedoStacks.splice(currentIndex + 1, 0, []);
+  currentIndex++;
+  renderPage();
+  loadCurrentPageState();
 }
 
-
 window.onload = function () {
-  const url = "black_pages_landscape.pdf"; // local file inside project
+  const url = "pdf/blank.pdf"; // local file inside project
 
   pdfjsLib.getDocument(url).promise.then((pdf) => {
     pdfDoc = pdf;
     pages = [];
+    pageStrokes.length = 0;
+    pageRedoStacks.length = 0;
 
     for (let i = 1; i <= pdf.numPages; i++) {
       pages.push({ type: "pdf", num: i });
+      pageStrokes.push([]);
+      pageRedoStacks.push([]);
     }
     
     currentIndex = 0;
     renderPage();
+    loadCurrentPageState();
   });
 };
 
@@ -494,3 +557,4 @@ function toggleFullscreen() {
     // Update every second
     updateDateTime();
     setInterval(updateDateTime, 1000);
+
