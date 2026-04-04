@@ -519,7 +519,7 @@ function addBlankPage() {
 }
 
 window.onload = function () {
-  const url = "pdf/blank.pdf"; // local file inside project
+  const url = "black_pages_landscapde.pdf"; // local file inside project
 
   pdfjsLib.getDocument(url).promise.then((pdf) => {
     pdfDoc = pdf;
