@@ -263,16 +263,26 @@ drawCanvas.addEventListener(
       return;
     }
 
-    for (let t of e.changedTouches) {
-      const stroke = activeTouches.get(t.identifier);
-      if (!stroke) continue;
+    // for (let t of e.changedTouches) {
+    //   const stroke = activeTouches.get(t.identifier);
+    //   if (!stroke) continue;
+for (let t of e.changedTouches) {
+  const stroke = activeTouches.get(t.identifier);
+  if (!stroke) continue;
 
-      undoStack.push(stroke);
-      redoStack.length = 0;
-      redraw(undoStack);
+  if (stroke.path.length > 1 || stroke.shape) {
+    undoStack.push(stroke); // 1. Save it first!
+    redoStack.length = 0;
+  }
+  activeTouches.delete(t.identifier); // 2. Delete it ONLY after saving!
+}
+redraw(undoStack); // 3. Draw it immediately!
+    //   undoStack.push(stroke);
+    //   redoStack.length = 0;
+    //   redraw(undoStack);
 
-      activeTouches.delete(t.identifier);
-    }
+    //   activeTouches.delete(t.identifier);
+    // }
   },
   { passive: false },
 );
