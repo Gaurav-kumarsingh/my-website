@@ -55,7 +55,7 @@ function redraw(strokes) {
     } else if (s.tool === "highlight") {
       ctx.globalCompositeOperation = "source-over";
       ctx.lineWidth = s.width * 5;
-      ctx.globalAlpha = 0.1;
+      ctx.globalAlpha = 0.3;
       ctx.strokeStyle = s.color;
     } else {
       ctx.globalCompositeOperation = "source-over";
@@ -176,11 +176,21 @@ drawCanvas.addEventListener(
         startY = t.clientY;
       }
     }
+
+    // Ensure active strokes are visible immediately
+    // if (activeTouches.size > 0 && !redrawScheduled) {
+    //   redrawScheduled = true;
+    //   requestAnimationFrame(() => {
+    //     redraw([...undoStack, ...Array.from(activeTouches.values())]);
+    //     redrawScheduled = false;
+    //   });
+    // } //changes addded 04
   },
   { passive: false },
 );
 
 // --- TOUCH MOVE ---
+let redrawScheduled = false;
 drawCanvas.addEventListener(
   "touchmove",
   (e) => {
@@ -198,6 +208,7 @@ drawCanvas.addEventListener(
       return;
     }
 
+    let needsRedraw = false;
     for (let t of e.changedTouches) {
       const stroke = activeTouches.get(t.identifier);
       if (!stroke) continue;
@@ -207,31 +218,8 @@ drawCanvas.addEventListener(
         stroke.tool === "erase" ||
         stroke.tool === "highlight"
       ) {
-        const lastPoint = stroke.path[stroke.path.length - 1];
         stroke.path.push({ x: t.clientX, y: t.clientY });
-
-        ctx.beginPath();
-        ctx.moveTo(lastPoint.x, lastPoint.y);
-        ctx.lineTo(t.clientX, t.clientY);
-
-        ctx.lineCap = "round";
-        if (stroke.tool === "erase") {
-          ctx.globalCompositeOperation = "destination-out";
-          ctx.lineWidth = stroke.width * 2;
-        } else if (stroke.tool === "highlight") {
-          ctx.globalCompositeOperation = "source-over";
-          ctx.lineWidth = stroke.width * 5;
-          ctx.globalAlpha = 0.1;
-          ctx.strokeStyle = stroke.color;
-        } else {
-          ctx.globalCompositeOperation = "source-over";
-          ctx.globalAlpha = 1;
-          ctx.lineWidth = stroke.width;
-          ctx.strokeStyle = stroke.color;
-        }
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = "source-over";
+        needsRedraw = true;
       } else {
         // Update shape coordinates dynamically
         stroke.shape.x2 = t.clientX;
@@ -243,11 +231,18 @@ drawCanvas.addEventListener(
           stroke.shape.cy = (stroke.shape.y1 + stroke.shape.y2) / 2;
           stroke.shape.r = Math.hypot(dx, dy) / 2;
         }
-
-        // Redraw all strokes plus current one
-        redraw([...undoStack, stroke]);
+        needsRedraw = true;
       }
     }
+
+    if (needsRedraw && !redrawScheduled) {
+  redrawScheduled = true;
+
+  requestAnimationFrame(() => {
+    redraw([...undoStack, ...Array.from(activeTouches.values())]);
+    redrawScheduled = false;
+  });
+}//cHanges aDded 03
   },
   { passive: false },
 );
@@ -263,26 +258,34 @@ drawCanvas.addEventListener(
       return;
     }
 
-    // for (let t of e.changedTouches) {
-    //   const stroke = activeTouches.get(t.identifier);
-    //   if (!stroke) continue;
-for (let t of e.changedTouches) {
-  const stroke = activeTouches.get(t.identifier);
-  if (!stroke) continue;
+    for (let t of e.changedTouches) {
+      const stroke = activeTouches.get(t.identifier);
+      if (!stroke) continue;
 
-  if (stroke.path.length > 1 || stroke.shape) {
-    undoStack.push(stroke); // 1. Save it first!
-    redoStack.length = 0;
-  }
-  activeTouches.delete(t.identifier); // 2. Delete it ONLY after saving!
-}
-redraw(undoStack); // 3. Draw it immediately!
-    //   undoStack.push(stroke);
-    //   redoStack.length = 0;
-    //   redraw(undoStack);
+      // Only add meaningful strokes to undo stack
+      let shouldAdd = true;
+      if (stroke.tool === "draw" || stroke.tool === "erase" || stroke.tool === "highlight") {
+        if (stroke.path.length <= 1) shouldAdd = false;
+      } else {
+        if (stroke.shape.x1 === stroke.shape.x2 && stroke.shape.y1 === stroke.shape.y2) shouldAdd = false;
+      }
 
-    //   activeTouches.delete(t.identifier);
-    // }
+      if (shouldAdd) {
+        undoStack.push(stroke);
+        redoStack.length = 0;
+      }
+
+      activeTouches.delete(t.identifier);
+    }
+
+    // Schedule redraw to include completed and active strokes
+    if (!redrawScheduled) {
+      redrawScheduled = true;
+      requestAnimationFrame(() => {
+        redraw(undoStack);//cHanges aDded 02
+        redrawScheduled = false;
+      });
+    }
   },
   { passive: false },
 );
@@ -516,7 +519,7 @@ function addBlankPage() {
 }
 
 window.onload = function () {
-  const url = "black_pages_landscape.pdf"; // local file inside project
+  const url = "pdf/blank.pdf"; // local file inside project
 
   pdfjsLib.getDocument(url).promise.then((pdf) => {
     pdfDoc = pdf;
@@ -568,3 +571,5 @@ function toggleFullscreen() {
     updateDateTime();
     setInterval(updateDateTime, 1000);
 
+
+    
